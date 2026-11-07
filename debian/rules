@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The Blueberry Pie OS Authors
+
+include /usr/share/pietoolchain/rules.mk
+
+$(OBJ)/sysmon.o: $(SRCROOT)/sysmon.c $(SRCROOT)/sysmon.h
+	@mkdir -p $(OBJ)
+	$(CC) $(BASE_CFLAGS) -c $< -o $@
+
+$(OBJ)/libsysmon.dylib: $(OBJ)/sysmon.o
+	$(CC) $(BASE_LDFLAGS) -dynamiclib -install_name /usr/lib/libsysmon.dylib \
+		-compatibility_version 1 -current_version 1 $< -o $@
+
+install: $(OBJ)/libsysmon.dylib
+	install -d $(ROOT)/usr/lib $(ROOT)/usr/include
+	install -m 755 $(OBJ)/libsysmon.dylib $(ROOT)/usr/lib/
+	install -m 644 $(SRCROOT)/sysmon.h $(ROOT)/usr/include/
+
+.PHONY: install

@@ -1,0 +1,27 @@
+Source: libsysmon
+Section: libs
+Priority: optional
+Maintainer: Maxwell <maxwell@blueberrypieos.com>
+Build-Depends: pietoolchain (>= 0.1.0)
+Standards-Version: 4.7.3
+Homepage: https://github.com/blueberrypieos/libsysmon
+Vcs-Git: https://github.com/blueberrypieos/libsysmon.git
+Vcs-Browser: https://github.com/blueberrypieos/libsysmon
+Rules-Requires-Root: no
+
+Package: libsysmon
+Architecture: darwin-arm64
+Essential: yes
+Priority: required
+Depends: libsystem
+Description: process table library
+ /usr/lib/libsysmon.dylib: a table of the running processes, which
+ adv-cmds' pkill and pgrep read.
+
+Package: libsysmon-dev
+Section: libdevel
+Priority: optional
+Architecture: darwin-arm64
+Depends: libsysmon (= ${binary:Version})
+Description: process table library: development files
+ The header for building programs against libsysmon.
