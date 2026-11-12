@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/param.h>
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
 #include "sysmon.h"
@@ -147,6 +148,57 @@ copy_arguments(pid_t pid)
 	return args;
 }
 
+struct proc_info_row {
+	uint64_t pid, flags, uid, ruid, rgid, ppid, pgid, tdev;
+	int64_t start_sec, start_usec;
+	char comm[MAXCOMLEN + 1];
+};
+
+static int
+proc_row(pid_t pid, struct proc_info_row *pi)
+{
+	struct proc_bsdinfo bi;
+	struct proc_bsdshortinfo si;
+	struct kinfo_proc kp;
+	size_t len = sizeof(kp);
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+
+	memset(pi, 0, sizeof(*pi));
+	if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bi, sizeof(bi)) == (int)sizeof(bi)) {
+		pi->pid = bi.pbi_pid;
+		pi->flags = bi.pbi_flags;
+		pi->uid = bi.pbi_uid;
+		pi->ruid = bi.pbi_ruid;
+		pi->rgid = bi.pbi_rgid;
+		pi->ppid = bi.pbi_ppid;
+		pi->pgid = bi.pbi_pgid;
+		pi->tdev = (uint32_t)bi.e_tdev;
+		pi->start_sec = (int64_t)bi.pbi_start_tvsec;
+		pi->start_usec = (int64_t)bi.pbi_start_tvusec;
+		memcpy(pi->comm, bi.pbi_comm, MAXCOMLEN);
+		return 0;
+	}
+	if (proc_pidinfo(pid, PROC_PIDT_SHORTBSDINFO, 0, &si, sizeof(si)) != (int)sizeof(si)) {
+		return -1;
+	}
+	pi->pid = si.pbsi_pid;
+	pi->flags = si.pbsi_flags;
+	pi->uid = si.pbsi_uid;
+	pi->ruid = si.pbsi_ruid;
+	pi->rgid = si.pbsi_rgid;
+	pi->ppid = si.pbsi_ppid;
+	pi->pgid = si.pbsi_pgid;
+	memcpy(pi->comm, si.pbsi_comm, MAXCOMLEN);
+	if (sysctl(mib, 4, &kp, &len, NULL, 0) == 0 && len == sizeof(kp) && kp.kp_proc.p_pid == pid) {
+		pi->tdev = (uint32_t)kp.kp_eproc.e_tdev;
+		pi->start_sec = kp.kp_proc.p_starttime.tv_sec;
+		pi->start_usec = kp.kp_proc.p_starttime.tv_usec;
+	} else {
+		pi->tdev = (uint32_t)NODEV;
+	}
+	return 0;
+}
+
 static sysmon_table_t
 process_table(sysmon_request_t r)
 {
@@ -171,38 +223,34 @@ process_table(sysmon_request_t r)
 		return NULL;
 	}
 	for (int i = 0; i < n; i++) {
-		struct proc_bsdinfo bi;
-		if (proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &bi, sizeof(bi)) != (int)sizeof(bi)) {
+		struct proc_info_row pi;
+		if (proc_row(pids[i], &pi) != 0) {
 			continue;
 		}
 		struct sysmon_row_s *row = &t->rows[t->count++];
 		uint64_t numbers[SYSMON_ATTR_MAX + 1] = {
-			[SYSMON_ATTR_PROC_PID] = bi.pbi_pid,
-			[SYSMON_ATTR_PROC_FLAGS] = bi.pbi_flags,
-			[SYSMON_ATTR_PROC_UID] = bi.pbi_uid,
-			[SYSMON_ATTR_PROC_RUID] = bi.pbi_ruid,
-			[SYSMON_ATTR_PROC_RGID] = bi.pbi_rgid,
-			[SYSMON_ATTR_PROC_PPID] = bi.pbi_ppid,
-			[SYSMON_ATTR_PROC_PGID] = bi.pbi_pgid,
-			[SYSMON_ATTR_PROC_TDEV] = bi.e_tdev,
+			[SYSMON_ATTR_PROC_PID] = pi.pid,
+			[SYSMON_ATTR_PROC_FLAGS] = pi.flags,
+			[SYSMON_ATTR_PROC_UID] = pi.uid,
+			[SYSMON_ATTR_PROC_RUID] = pi.ruid,
+			[SYSMON_ATTR_PROC_RGID] = pi.rgid,
+			[SYSMON_ATTR_PROC_PPID] = pi.ppid,
+			[SYSMON_ATTR_PROC_PGID] = pi.pgid,
+			[SYSMON_ATTR_PROC_TDEV] = pi.tdev,
 		};
 		for (int a = 1; a <= SYSMON_ATTR_MAX; a++) {
 			if (!r->want[a]) {
 				continue;
 			}
 			switch (a) {
-			case SYSMON_ATTR_PROC_COMM: {
-				char comm[MAXCOMLEN + 1];
-				strlcpy(comm, bi.pbi_comm, sizeof(comm));
-				row->value[a] = xpc_string_create(comm);
+			case SYSMON_ATTR_PROC_COMM:
+				row->value[a] = xpc_string_create(pi.comm);
 				break;
-			}
 			case SYSMON_ATTR_PROC_ARGUMENTS:
-				row->value[a] = copy_arguments(bi.pbi_pid);
+				row->value[a] = copy_arguments(pi.pid);
 				break;
 			case SYSMON_ATTR_PROC_START:
-				row->value[a] = xpc_date_create((int64_t)bi.pbi_start_tvsec * 1000000000 +
-				    (int64_t)bi.pbi_start_tvusec * 1000);
+				row->value[a] = xpc_date_create(pi.start_sec * 1000000000 + pi.start_usec * 1000);
 				break;
 			default:
 				row->value[a] = xpc_uint64_create(numbers[a]);
